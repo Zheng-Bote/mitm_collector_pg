@@ -10,7 +10,7 @@ For code details, refer to:
 
 ## 🏗️ How It Works
 
-1.  **Bootstrapping**: Expects the MitM database connection configuration passed as a JSON string argument, and environment settings from the parent scheduler.
+1.  **Bootstrapping**: Expects the MitM database connection configuration passed as a JSON string argument (`os.Args[1]`), an optional JSON arguments string (`os.Args[2]`) injected by the scheduler to override settings (like table name and source name), and environment settings.
 2.  **Envelope Decryption**:
     *   Reads the Key Encryption Key (KEK) from the `MASTER_KEY` environment variable.
     *   Retrieves the encrypted source DB config and wrapped Data Encryption Key (DEK) from the MitM database.
@@ -18,7 +18,7 @@ For code details, refer to:
 3.  **Data Extraction**:
     *   Connects to the source PostgreSQL database.
     *   Retrieves the last processed cursor offset from `ingestion_cursors`.
-    *   Queries new records from the `employees` table (`id > lastCursor`).
+    *   Queries new records from the specified source table (defaults to `employees`, `id > lastCursor`).
 4.  **Ingestion**:
     *   Encrypts each employee record as a JSON fragment via AES-GCM using the DEK and a fresh random nonce.
     *   Inserts the encrypted records into `raw_ingestion` with `pending` status.
@@ -35,11 +35,14 @@ For code details, refer to:
 *   `RUN_ID` (Optional): Run ID injected by the scheduler to identify this execution instance.
 *   `SCHEDULER_SOCKET_PATH` (Optional): Path to the Unix socket for IPC event logging.
 
-### JSON CLI Argument
+### JSON CLI Arguments
 
-The collector requires a single JSON parameter as a command-line argument detailing the connection to the MitM target database.
+The collector accepts up to two JSON parameters as command-line arguments:
 
-#### Example JSON Config:
+#### 1. MitM Target DB Connection (`os.Args[1]`)
+A JSON string detailing the connection parameters to the central MitM target database.
+
+Example:
 ```json
 {
   "host": "localhost",
@@ -50,7 +53,18 @@ The collector requires a single JSON parameter as a command-line argument detail
   "source_name": "PG_EMPLOYEE"
 }
 ```
-*Note: Alternatively, you can pass a single `"dsn"` key containing the full connection string instead of host/port details.*
+*Note: Alternatively, you can pass a single `"dsn"` key containing the full connection string.*
+
+#### 2. Optional Job Overrides (`os.Args[2]`)
+An optional JSON string passed by the scheduler to override the default ingestion behaviour.
+
+Example:
+```json
+{
+  "source_name": "PG_EMPLOYEE",
+  "table": "employees"
+}
+```
 
 ---
 
@@ -79,7 +93,7 @@ To test the binary manually from the command line:
 # 1. Export the Master Key (must match the one used during DB initialization)
 export MASTER_KEY="Y29uZmlkZW50aWFsX21hc3Rlcl9rZXlfMzJfYnl0ZXM="
 
-# 2. Run the collector binary, passing the MitM connection details
+# 2. Run the collector binary, passing the MitM connection details and optional overrides
 ./bin/mitm-collector-pg-employee '{
   "host": "127.0.0.1",
   "port": 5432,
@@ -87,5 +101,5 @@ export MASTER_KEY="Y29uZmlkZW50aWFsX21hc3Rlcl9rZXlfMzJfYnl0ZXM="
   "password": "yourpassword",
   "database": "mitm",
   "source_name": "PG_EMPLOYEE"
-}'
+}' '{"source_name": "PG_EMPLOYEE", "table": "employees"}'
 ```
