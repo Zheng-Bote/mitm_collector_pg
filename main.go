@@ -58,21 +58,12 @@ type SourceDBConfig struct {
 	DSN      string `json:"dsn"`
 }
 
-// Employee defines the structure of data fetched from the source database
-type Employee struct {
-	ID         int       `json:"id"`
-	FirstName  string    `json:"first_name"`
-	LastName   string    `json:"last_name"`
-	Email      string    `json:"email"`
-	Department string    `json:"department"`
-	Salary     float64   `json:"salary"`
-	HireDate   time.Time `json:"hire_date"`
-}
-
 // CollectorArgs defines optional runtime arguments passed by the scheduler as JSON
 type CollectorArgs struct {
-	SourceName string `json:"source_name"`
-	Table      string `json:"table"`
+	SourceName   string `json:"source_name"`
+	Table        string `json:"table"`
+	CursorColumn string `json:"cursor_column"`
+	Topic        string `json:"topic"`
 }
 
 // StatusEvent is sent to the scheduler Unix socket
@@ -165,6 +156,9 @@ func main() {
 
 	// 3b. Parse optional collector arguments from scheduler (os.Args[2])
 	tableName := "employees"
+	cursorColumn := "id"
+	topicName := "employee.data"
+
 	if len(os.Args) >= 3 {
 		var colArgs CollectorArgs
 		if err := json.Unmarshal([]byte(os.Args[2]), &colArgs); err == nil {
@@ -173,6 +167,13 @@ func main() {
 			}
 			if colArgs.Table != "" {
 				tableName = colArgs.Table
+				topicName = fmt.Sprintf("pg.%s.data", strings.ToLower(tableName))
+			}
+			if colArgs.CursorColumn != "" {
+				cursorColumn = colArgs.CursorColumn
+			}
+			if colArgs.Topic != "" {
+				topicName = colArgs.Topic
 			}
 		} else {
 			log.Printf("Warning: Failed to parse collector arguments from os.Args[2]: %v", err)
@@ -334,19 +335,6 @@ func main() {
 	ipc.SendEvent("processing", "Connected to source database", 50)
 	ipc.SendAudit("Connected to source database successfully")
 
-	// Ensure source table exists in source for testing robustness
-	_, _ = sourcePool.Exec(ctx, fmt.Sprintf(`
-		CREATE TABLE IF NOT EXISTS %s (
-			id          SERIAL PRIMARY KEY,
-			first_name  VARCHAR(50),
-			last_name   VARCHAR(50) NOT NULL,
-			email       VARCHAR(100),
-			department  VARCHAR(50),
-			salary      NUMERIC,
-			hire_date   DATE DEFAULT CURRENT_DATE
-		);
-	`, sanitizedTable))
-
 	// 12. Retrieve cursor from MitM database
 	var lastCursor string
 	err = mitmPool.QueryRow(ctx, "SELECT last_cursor FROM ingestion_cursors WHERE source_name = $1", targetCfg.SourceName).Scan(&lastCursor)
@@ -356,95 +344,134 @@ func main() {
 
 	// 13. Query source table
 	var rows pgx.Rows
+	var queryArgs []interface{}
+	var query string
+
 	if lastCursor != "" {
-		lastID, _ := strconv.Atoi(lastCursor)
-		rows, err = sourcePool.Query(ctx, fmt.Sprintf(`
-			SELECT id, first_name, last_name, email, department, CAST(salary AS float8), hire_date 
-			FROM %s 
-			WHERE id > $1 
-			ORDER BY id ASC
-		`, sanitizedTable), lastID)
+		var cursorVal interface{} = lastCursor
+		if val, err := strconv.Atoi(lastCursor); err == nil {
+			cursorVal = val
+		} else if val, err := strconv.ParseFloat(lastCursor, 64); err == nil {
+			cursorVal = val
+		}
+		query = fmt.Sprintf("SELECT * FROM %s WHERE %s > $1 ORDER BY %s ASC", 
+			sanitizedTable, cursorColumn, cursorColumn)
+		queryArgs = append(queryArgs, cursorVal)
 	} else {
-		rows, err = sourcePool.Query(ctx, fmt.Sprintf(`
-			SELECT id, first_name, last_name, email, department, CAST(salary AS float8), hire_date 
-			FROM %s 
-			ORDER BY id ASC
-		`, sanitizedTable))
+		query = fmt.Sprintf("SELECT * FROM %s ORDER BY %s ASC", 
+			sanitizedTable, cursorColumn)
 	}
 
+	rows, err = sourcePool.Query(ctx, query, queryArgs...)
 	if err != nil {
 		ipc.SendEvent("failed", fmt.Sprintf("Failed to query source database: %v", err), 0)
 		log.Fatalf("Failed to query source database: %v", err)
 	}
 	defer rows.Close()
 
-	// 14. Iterate and ingest records
-	recordsIngested := 0
-	maxIDProcessed := 0
+	// 14. Iterate and ingest records dynamically
+	fields := rows.FieldDescriptions()
+	cols := make([]string, len(fields))
+	for i, f := range fields {
+		cols[i] = f.Name
+	}
 
-	ipc.SendEvent("processing", "Reading employee records and preparing ingestion", 70)
+	cursorColIdx := -1
+	for idx, colName := range cols {
+		if strings.EqualFold(colName, cursorColumn) {
+			cursorColIdx = idx
+			break
+		}
+	}
+
+	recordsIngested := 0
+	maxCursorValue := ""
+
+	ipc.SendEvent("processing", "Preparing dynamic record ingestion", 70)
 
 	for rows.Next() {
-		var emp Employee
-		err := rows.Scan(&emp.ID, &emp.FirstName, &emp.LastName, &emp.Email, &emp.Department, &emp.Salary, &emp.HireDate)
+		values, err := rows.Values()
 		if err != nil {
-			log.Printf("Failed to scan employee record: %v", err)
+			log.Printf("Failed to scan PostgreSQL row: %v", err)
 			continue
 		}
 
-		// Convert employee to JSON
-		empJSON, err := json.Marshal(emp)
+		// Map column names to values
+		rowMap := make(map[string]interface{})
+		var currentCursorVal string
+
+		for i, colName := range cols {
+			cleaned := cleanValue(values[i])
+			rowMap[colName] = cleaned
+
+			// Keep track of cursor value for this row
+			if i == cursorColIdx && cleaned != nil {
+				currentCursorVal = fmt.Sprintf("%v", cleaned)
+			}
+		}
+
+		// Convert map to JSON
+		rowJSON, err := json.Marshal(rowMap)
 		if err != nil {
-			log.Printf("Failed to marshal employee record (ID: %d): %v", emp.ID, err)
+			log.Printf("Failed to marshal row to JSON: %v", err)
 			continue
 		}
 
-		// Generate random 12-byte nonce for AES-GCM
+		// Generate random 12-byte nonce
 		nonce := make([]byte, 12)
 		if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-			log.Printf("Failed to generate nonce for employee (ID: %d): %v", emp.ID, err)
+			log.Printf("Failed to generate random nonce: %v", err)
 			continue
 		}
 
-		// Encrypt payload via GCM using storage DEK
-		encryptedPayload := dekGCM.Seal(nil, nonce, empJSON, nil)
+		// Encrypt payload via AES-GCM using storage DEK
+		encryptedPayload := dekGCM.Seal(nil, nonce, rowJSON, nil)
 
-		topic := "employee.data"
-		if strings.ToLower(sanitizedTable) != "employees" {
-			topic = fmt.Sprintf("pg.%s.data", strings.ToLower(sanitizedTable))
-		}
-
-		// Insert into raw_ingestion
+		// Insert into raw_ingestion in target database
 		_, err = mitmPool.Exec(ctx, `
 			INSERT INTO raw_ingestion (topic, source_system, correlation_id, payload, nonce, dek_id, status)
 			VALUES ($1, $2, gen_random_uuid(), $3, $4, $5, 'pending')
-		`, topic, targetCfg.SourceName, encryptedPayload, nonce, dekID)
+		`, topicName, targetCfg.SourceName, encryptedPayload, nonce, dekID)
 		if err != nil {
-			log.Printf("Failed to insert raw fragment for employee (ID: %d): %v", emp.ID, err)
+			log.Printf("Failed to insert raw fragment: %v", err)
 			continue
 		}
 
 		recordsIngested++
-		if emp.ID > maxIDProcessed {
-			maxIDProcessed = emp.ID
+		if currentCursorVal != "" {
+			maxCursorValue = currentCursorVal
 		}
 	}
 
 	// 15. Update cursor if records were ingested
-	if recordsIngested > 0 {
+	if recordsIngested > 0 && maxCursorValue != "" {
 		_, err = mitmPool.Exec(ctx, `
 			INSERT INTO ingestion_cursors (source_name, last_cursor, updated_at)
 			VALUES ($1, $2, NOW())
 			ON CONFLICT (source_name) 
 			DO UPDATE SET last_cursor = EXCLUDED.last_cursor, updated_at = NOW()
-		`, targetCfg.SourceName, strconv.Itoa(maxIDProcessed))
+		`, targetCfg.SourceName, maxCursorValue)
 		if err != nil {
 			log.Printf("Failed to save current cursor state: %v", err)
 		}
-		ipc.SendAudit(fmt.Sprintf("Ingested %d records. Cursor updated to %d.", recordsIngested, maxIDProcessed))
+		ipc.SendAudit(fmt.Sprintf("Ingested %d PostgreSQL records. Cursor updated to %s.", recordsIngested, maxCursorValue))
 	}
 
 	// 16. Finish execution
-	ipc.SendEvent("finished", fmt.Sprintf("Successfully processed and ingested %d employee records into RAW table", recordsIngested), 100)
+	ipc.SendEvent("finished", fmt.Sprintf("Successfully processed and ingested %d PostgreSQL records into RAW table", recordsIngested), 100)
 	log.Printf("Collector finished. Ingested %d records.", recordsIngested)
+}
+
+func cleanValue(val interface{}) interface{} {
+	if val == nil {
+		return nil
+	}
+	switch v := val.(type) {
+	case []byte:
+		return string(v)
+	case time.Time:
+		return v.Format(time.RFC3339)
+	default:
+		return v
+	}
 }
