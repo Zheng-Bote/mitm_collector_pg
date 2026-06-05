@@ -30,6 +30,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -66,6 +67,12 @@ type Employee struct {
 	Department string    `json:"department"`
 	Salary     float64   `json:"salary"`
 	HireDate   time.Time `json:"hire_date"`
+}
+
+// CollectorArgs defines optional runtime arguments passed by the scheduler as JSON
+type CollectorArgs struct {
+	SourceName string `json:"source_name"`
+	Table      string `json:"table"`
 }
 
 // StatusEvent is sent to the scheduler Unix socket
@@ -154,6 +161,30 @@ func main() {
 	if err := json.Unmarshal([]byte(jsonConfig), &targetCfg); err != nil {
 		ipc.SendEvent("failed", fmt.Sprintf("Failed to parse MitM database JSON config: %v", err), 0)
 		log.Fatalf("Failed to parse MitM JSON configuration: %v", err)
+	}
+
+	// 3b. Parse optional collector arguments from scheduler (os.Args[2])
+	tableName := "employees"
+	if len(os.Args) >= 3 {
+		var colArgs CollectorArgs
+		if err := json.Unmarshal([]byte(os.Args[2]), &colArgs); err == nil {
+			if colArgs.SourceName != "" {
+				targetCfg.SourceName = colArgs.SourceName
+			}
+			if colArgs.Table != "" {
+				tableName = colArgs.Table
+			}
+		} else {
+			log.Printf("Warning: Failed to parse collector arguments from os.Args[2]: %v", err)
+		}
+	}
+
+	// Sanitize tableName (prevent SQL injection)
+	sanitizedTable := tableName
+	for _, char := range sanitizedTable {
+		if !((char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') || char == '_' || char == '.') {
+			log.Fatalf("Invalid table name: %s", tableName)
+		}
 	}
 
 	if targetCfg.SourceName == "" {
@@ -303,9 +334,9 @@ func main() {
 	ipc.SendEvent("processing", "Connected to source database", 50)
 	ipc.SendAudit("Connected to source database successfully")
 
-	// Ensure employees table exists in source for testing robustness
-	_, _ = sourcePool.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS employees (
+	// Ensure source table exists in source for testing robustness
+	_, _ = sourcePool.Exec(ctx, fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS %s (
 			id          SERIAL PRIMARY KEY,
 			first_name  VARCHAR(50),
 			last_name   VARCHAR(50) NOT NULL,
@@ -314,7 +345,7 @@ func main() {
 			salary      NUMERIC,
 			hire_date   DATE DEFAULT CURRENT_DATE
 		);
-	`)
+	`, sanitizedTable))
 
 	// 12. Retrieve cursor from MitM database
 	var lastCursor string
@@ -323,22 +354,22 @@ func main() {
 		log.Printf("Warning: Failed to load cursor: %v", err)
 	}
 
-	// 13. Query source employees table
+	// 13. Query source table
 	var rows pgx.Rows
 	if lastCursor != "" {
 		lastID, _ := strconv.Atoi(lastCursor)
-		rows, err = sourcePool.Query(ctx, `
+		rows, err = sourcePool.Query(ctx, fmt.Sprintf(`
 			SELECT id, first_name, last_name, email, department, CAST(salary AS float8), hire_date 
-			FROM employees 
+			FROM %s 
 			WHERE id > $1 
 			ORDER BY id ASC
-		`, lastID)
+		`, sanitizedTable), lastID)
 	} else {
-		rows, err = sourcePool.Query(ctx, `
+		rows, err = sourcePool.Query(ctx, fmt.Sprintf(`
 			SELECT id, first_name, last_name, email, department, CAST(salary AS float8), hire_date 
-			FROM employees 
+			FROM %s 
 			ORDER BY id ASC
-		`)
+		`, sanitizedTable))
 	}
 
 	if err != nil {
@@ -378,11 +409,16 @@ func main() {
 		// Encrypt payload via GCM using storage DEK
 		encryptedPayload := dekGCM.Seal(nil, nonce, empJSON, nil)
 
+		topic := "employee.data"
+		if strings.ToLower(sanitizedTable) != "employees" {
+			topic = fmt.Sprintf("pg.%s.data", strings.ToLower(sanitizedTable))
+		}
+
 		// Insert into raw_ingestion
 		_, err = mitmPool.Exec(ctx, `
 			INSERT INTO raw_ingestion (topic, source_system, correlation_id, payload, nonce, dek_id, status)
 			VALUES ($1, $2, gen_random_uuid(), $3, $4, $5, 'pending')
-		`, "employee.data", targetCfg.SourceName, encryptedPayload, nonce, dekID)
+		`, topic, targetCfg.SourceName, encryptedPayload, nonce, dekID)
 		if err != nil {
 			log.Printf("Failed to insert raw fragment for employee (ID: %d): %v", emp.ID, err)
 			continue
