@@ -5,6 +5,12 @@ All notable changes to the PostgreSQL Collector will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.3.0] - 2026-06-06
+
+### Changed
+- Changed MitM database credentials initialization: Credentials are now read from `MITM_DB_*` environment variables instead of `os.Args[1]`.
+- Job argument configuration (`CollectorArgs`) is now read from `os.Args[1]` instead of `os.Args[2]`.
+
 ## [v0.2.0] - 2026-06-05
 
 ### Added

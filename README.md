@@ -10,7 +10,7 @@ For code details, refer to:
 
 ## 🏗️ How It Works
 
-1.  **Bootstrapping**: Expects the MitM database connection configuration passed as a JSON string argument (`os.Args[1]`), an optional JSON arguments string (`os.Args[2]`) injected by the scheduler to override settings (like table name and source name), and environment settings.
+1.  **Bootstrapping**: Expects the MitM database connection configuration passed via `MITM_DB_*` environment variables, an optional JSON arguments string (`os.Args[1]`) injected by the scheduler to override settings (like table name and source name), and other environment settings.
 2.  **Envelope Decryption**:
     *   Reads the Key Encryption Key (KEK) from the `MASTER_KEY` environment variable.
     *   Retrieves the encrypted source DB config and wrapped Data Encryption Key (DEK) from the MitM database.
@@ -32,30 +32,15 @@ For code details, refer to:
 ### Environment Variables
 
 *   `MASTER_KEY` (Required): The base64-encoded 32-byte Master Key (KEK) used to unwrap DEKs.
+*   `MITM_DB_HOST`, `MITM_DB_PORT`, `MITM_DB_USER`, `MITM_DB_PASSWORD`, `MITM_DB_NAME` (Required): The connection parameters for the central target MitM database. Alternatively, the JSON equivalent can be passed via `MITM_DB_CONFIG_JSON`.
 *   `RUN_ID` (Optional): Run ID injected by the scheduler to identify this execution instance.
 *   `SCHEDULER_SOCKET_PATH` (Optional): Path to the Unix socket for IPC event logging.
 
 ### JSON CLI Arguments
 
-The collector accepts up to two JSON parameters as command-line arguments:
+The collector accepts an optional JSON parameter as command-line argument:
 
-#### 1. MitM Target DB Connection (`os.Args[1]`)
-A JSON string detailing the connection parameters to the central MitM target database.
-
-Example:
-```json
-{
-  "host": "localhost",
-  "port": 5432,
-  "user": "mitm_user",
-  "password": "mitm_password",
-  "database": "mitm",
-  "source_name": "PG_EMPLOYEE"
-}
-```
-*Note: Alternatively, you can pass a single `"dsn"` key containing the full connection string.*
-
-#### 2. Optional Job Overrides (`os.Args[2]`)
+#### 1. Optional Job Overrides (`os.Args[1]`)
 An optional JSON string passed by the scheduler to override the default ingestion behaviour.
 
 Example:
@@ -94,12 +79,11 @@ To test the binary manually from the command line:
 export MASTER_KEY="Y29uZmlkZW50aWFsX21hc3Rlcl9rZXlfMzJfYnl0ZXM="
 
 # 2. Run the collector binary, passing the MitM connection details and optional overrides
-./bin/mitm-collector-pg-employee '{
-  "host": "127.0.0.1",
-  "port": 5432,
-  "user": "postgres",
-  "password": "yourpassword",
-  "database": "mitm",
-  "source_name": "PG_EMPLOYEE"
-}' '{"source_name": "PG_EMPLOYEE", "table": "employees"}'
+export MITM_DB_HOST="127.0.0.1"
+export MITM_DB_PORT="5432"
+export MITM_DB_USER="postgres"
+export MITM_DB_PASSWORD="yourpassword"
+export MITM_DB_NAME="mitm"
+
+./bin/mitm-collector-pg-employee '{"source_name": "PG_EMPLOYEE", "table": "employees"}'
 ```

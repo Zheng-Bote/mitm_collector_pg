@@ -124,13 +124,6 @@ func (c *IPCClient) SendAudit(message string) {
 }
 
 func main() {
-	// 1. Check arguments
-	if len(os.Args) < 2 {
-		log.Fatal("Usage: collector <json_database_config>")
-	}
-
-	jsonConfig := os.Args[1]
-
 	// 2. Load IPC Environment
 	var ipc *IPCClient
 	runIDStr := os.Getenv("RUN_ID")
@@ -147,21 +140,38 @@ func main() {
 
 	ipc.SendEvent("started", "Employee collector program started", 0)
 
-	// 3. Parse Target DB configuration
+	// 3. Parse Target DB configuration from ENV
 	var targetCfg TargetDBConfig
-	if err := json.Unmarshal([]byte(jsonConfig), &targetCfg); err != nil {
-		ipc.SendEvent("failed", fmt.Sprintf("Failed to parse MitM database JSON config: %v", err), 0)
-		log.Fatalf("Failed to parse MitM JSON configuration: %v", err)
+	targetCfg.Host = os.Getenv("MITM_DB_HOST")
+	if portStr := os.Getenv("MITM_DB_PORT"); portStr != "" {
+		targetCfg.Port, _ = strconv.Atoi(portStr)
+	}
+	targetCfg.User = os.Getenv("MITM_DB_USER")
+	targetCfg.Password = os.Getenv("MITM_DB_PASSWORD")
+	targetCfg.Database = os.Getenv("MITM_DB_NAME")
+
+	if targetCfg.Host == "" {
+		// Fallback to JSON from ENV
+		jsonConfig := os.Getenv("MITM_DB_CONFIG_JSON")
+		if jsonConfig != "" {
+			if err := json.Unmarshal([]byte(jsonConfig), &targetCfg); err != nil {
+				ipc.SendEvent("failed", fmt.Sprintf("Failed to parse MitM database JSON config: %v", err), 0)
+				log.Fatalf("Failed to parse MitM JSON configuration: %v", err)
+			}
+		} else {
+			ipc.SendEvent("failed", "MitM database configuration missing in ENV", 0)
+			log.Fatal("MitM database credentials not found in environment (MITM_DB_HOST or MITM_DB_CONFIG_JSON)")
+		}
 	}
 
-	// 3b. Parse optional collector arguments from scheduler (os.Args[2])
+	// 3b. Parse optional collector arguments from scheduler (now in os.Args[1])
 	tableName := "employees"
 	cursorColumn := "id"
 	topicName := "employee.data"
 
-	if len(os.Args) >= 3 {
+	if len(os.Args) >= 2 {
 		var colArgs CollectorArgs
-		if err := json.Unmarshal([]byte(os.Args[2]), &colArgs); err == nil {
+		if err := json.Unmarshal([]byte(os.Args[1]), &colArgs); err == nil {
 			if colArgs.SourceName != "" {
 				targetCfg.SourceName = colArgs.SourceName
 			}
@@ -176,7 +186,7 @@ func main() {
 				topicName = colArgs.Topic
 			}
 		} else {
-			log.Printf("Warning: Failed to parse collector arguments from os.Args[2]: %v", err)
+			log.Printf("Warning: Failed to parse collector arguments from os.Args[1]: %v", err)
 		}
 	}
 
