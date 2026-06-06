@@ -222,8 +222,6 @@ func main() {
 
 	ipc.SendEvent("processing", "Connected to MitM database", 20)
 
-
-
 	// 5. Load KEK from environment
 	masterKey := os.Getenv("MASTER_KEY")
 	if masterKey == "" {
@@ -364,11 +362,11 @@ func main() {
 		} else if val, err := strconv.ParseFloat(lastCursor, 64); err == nil {
 			cursorVal = val
 		}
-		query = fmt.Sprintf("SELECT * FROM %s WHERE %s > $1 ORDER BY %s ASC", 
+		query = fmt.Sprintf("SELECT * FROM %s WHERE %s > $1 ORDER BY %s ASC",
 			sanitizedTable, cursorColumn, cursorColumn)
 		queryArgs = append(queryArgs, cursorVal)
 	} else {
-		query = fmt.Sprintf("SELECT * FROM %s ORDER BY %s ASC", 
+		query = fmt.Sprintf("SELECT * FROM %s ORDER BY %s ASC",
 			sanitizedTable, cursorColumn)
 	}
 
