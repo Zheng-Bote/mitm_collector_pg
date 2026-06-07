@@ -1,10 +1,10 @@
-# PostgreSQL Employee Collector
+# PostgreSQL Collector
 
-The **PostgreSQL Employee Collector** is an autonomous Go program designed to run as a scheduled job. It retrieves employee data from a source PostgreSQL database, encrypts it using Envelope Encryption (AES-GCM), and inserts the raw fragments into the central MitM database's `raw_ingestion` table.
+The **PostgreSQL Collector** is an autonomous Go program designed to run as a scheduled job. It dynamically retrieves all records from a specified database table inside a Postgres database instance, encrypts it using Envelope Encryption (AES-GCM), and inserts the raw fragments into the central MitM database's `raw_ingestion` table.
 
 For code details, refer to:
-*   [main.go](file:///home/zb_bamboo/DEV/__NEW__/Go/mitm-2/collector-layer/mitm_collector_pg-employee/main.go) - Ingestion & encryption logic.
-*   [go.mod](file:///home/zb_bamboo/DEV/__NEW__/Go/mitm-2/collector-layer/mitm_collector_pg-employee/go.mod) - Dependency definition.
+*   [main.go](file:///home/zb_bamboo/DEV/__NEW__/Go/mitm-2/collector-layer/mitm_collector_pg/main.go) - Ingestion & encryption logic.
+*   [go.mod](file:///home/zb_bamboo/DEV/__NEW__/Go/mitm-2/collector-layer/mitm_collector_pg/go.mod) - Dependency definition.
 
 ---
 
