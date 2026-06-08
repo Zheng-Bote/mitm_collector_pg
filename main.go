@@ -166,7 +166,7 @@ func main() {
 
 	// 3b. Parse optional collector arguments from scheduler (now in os.Args[1])
 	tableName := "employees"
-	cursorColumn := "id"
+	cursorColumn := "" // No default, to allow tables without 'id'
 	topicName := "employee.data"
 
 	if len(os.Args) >= 2 {
@@ -355,7 +355,7 @@ func main() {
 	var queryArgs []interface{}
 	var query string
 
-	if lastCursor != "" {
+	if lastCursor != "" && cursorColumn != "" {
 		var cursorVal interface{} = lastCursor
 		if val, err := strconv.Atoi(lastCursor); err == nil {
 			cursorVal = val
@@ -365,9 +365,11 @@ func main() {
 		query = fmt.Sprintf("SELECT * FROM %s WHERE %s > $1 ORDER BY %s ASC",
 			sanitizedTable, cursorColumn, cursorColumn)
 		queryArgs = append(queryArgs, cursorVal)
-	} else {
+	} else if cursorColumn != "" {
 		query = fmt.Sprintf("SELECT * FROM %s ORDER BY %s ASC",
 			sanitizedTable, cursorColumn)
+	} else {
+		query = fmt.Sprintf("SELECT * FROM %s", sanitizedTable)
 	}
 
 	rows, err = sourcePool.Query(ctx, query, queryArgs...)
