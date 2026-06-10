@@ -68,17 +68,19 @@ type CollectorArgs struct {
 
 // StatusEvent is sent to the scheduler Unix socket
 type StatusEvent struct {
-	RunID    int    `json:"run_id"`
-	Type     string `json:"type"` // "status" or "audit"
-	Status   string `json:"status"`
-	Message  string `json:"message"`
-	Progress int    `json:"progress"`
+	RunID     int    `json:"run_id"`
+	Type      string `json:"type"` // "status" (default) or "audit"
+	Component string `json:"component"`
+	Status    string `json:"status"`
+	Message   string `json:"message"`
+	Progress  int    `json:"progress"`
 }
 
-// IPCClient handles communicating status updates to the parent scheduler
+// IPCClient is used to send events to the scheduler
 type IPCClient struct {
 	SocketPath string
 	RunID      int
+	Component  string
 }
 
 func (c *IPCClient) SendEvent(status, message string, progress int) {
@@ -115,9 +117,10 @@ func (c *IPCClient) SendAudit(message string) {
 	defer conn.Close()
 
 	event := StatusEvent{
-		RunID:   c.RunID,
-		Type:    "audit",
-		Message: message,
+		RunID:     c.RunID,
+		Type:      "audit",
+		Component: c.Component,
+		Message:   message,
 	}
 	data, _ := json.Marshal(event)
 	_, _ = conn.Write(append(data, '\n'))
@@ -134,6 +137,7 @@ func main() {
 			ipc = &IPCClient{
 				SocketPath: socketPath,
 				RunID:      runID,
+				Component:  "mitm_collector_pg",
 			}
 		}
 	}

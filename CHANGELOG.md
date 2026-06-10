@@ -5,6 +5,11 @@ All notable changes to the PostgreSQL Collector will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.5.0] - 2026-06-10
+
+### Added
+- **Component Identifier**: Upgraded `IPCClient` to include the `Component` identifier `"mitm_collector_pg"` in all audit and status events sent to the scheduler.
+
 ## [v0.3.0] - 2026-06-06
 
 ### Changed
