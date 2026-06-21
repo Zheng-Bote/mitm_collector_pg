@@ -5,6 +5,12 @@ All notable changes to the PostgreSQL Collector will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.7.0] - 2026-06-21
+
+### Added
+- **Stateful Aggregation**: Replaced `raw_ingestion_id` with a deterministic `correlation_id` (UUIDv5).
+- **Business Keys**: Introduced a `business_key_column` configuration property. The collector dynamically hashes this column's value (or a fallback) to compute stable correlation IDs, allowing cross-system fragment joins in the Transformation Layer.
+
 ## [v0.6.0] - 2026-06-15
 
 ### Added

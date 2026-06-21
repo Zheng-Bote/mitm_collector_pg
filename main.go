@@ -33,6 +33,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -66,10 +67,11 @@ type SourceDBConfig struct {
 
 // CollectorArgs defines optional runtime arguments passed by the scheduler as JSON
 type CollectorArgs struct {
-	SourceName   string `json:"source_name"`
-	Table        string `json:"table"`
-	CursorColumn string `json:"cursor_column"`
-	Topic        string `json:"topic"`
+	SourceName        string `json:"source_name"`
+	Table             string `json:"table"`
+	CursorColumn      string `json:"cursor_column"`
+	Topic             string `json:"topic"`
+	BusinessKeyColumn string `json:"business_key_column"`
 }
 
 // StatusEvent is sent to the scheduler Unix socket
@@ -179,6 +181,7 @@ func main() {
 	tableName := "employees"
 	cursorColumn := "" // No default, to allow tables without 'id'
 	topicName := "employee.data"
+	businessKeyCol := "id" // Default fallback
 
 	if len(os.Args) >= 2 {
 		var colArgs CollectorArgs
@@ -195,6 +198,9 @@ func main() {
 			}
 			if colArgs.Topic != "" {
 				topicName = colArgs.Topic
+			}
+			if colArgs.BusinessKeyColumn != "" {
+				businessKeyCol = colArgs.BusinessKeyColumn
 			}
 		} else {
 			log.Printf("Warning: Failed to parse collector arguments from os.Args[1]: %v", err)
@@ -448,11 +454,25 @@ func main() {
 		// Encrypt payload via AES-GCM using storage DEK
 		encryptedPayload := dekGCM.Seal(nil, nonce, rowJSON, nil)
 
+		// Determine Business Key
+		var businessKey string
+		if bkVal, ok := rowMap[businessKeyCol]; ok && bkVal != nil {
+			businessKey = fmt.Sprintf("%v", bkVal)
+		} else if currentCursorVal != "" {
+			businessKey = currentCursorVal
+		} else {
+			businessKey = "UNKNOWN"
+		}
+
+		// Generate deterministic Correlation ID
+		namespaceMitM := uuid.MustParse("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
+		correlationID := uuid.NewSHA1(namespaceMitM, []byte(businessKey))
+
 		// Insert into raw_ingestion in target database
 		_, err = mitmPool.Exec(ctx, `
 			INSERT INTO raw_ingestion (topic, source_system, correlation_id, payload, nonce, dek_id, status)
-			VALUES ($1, $2, gen_random_uuid(), $3, $4, $5, 'pending')
-		`, topicName, targetCfg.SourceName, encryptedPayload, nonce, dekID)
+			VALUES ($1, $2, $3, $4, $5, $6, 'pending')
+		`, topicName, targetCfg.SourceName, correlationID, encryptedPayload, nonce, dekID)
 		if err != nil {
 			log.Printf("Failed to insert raw fragment: %v", err)
 			continue

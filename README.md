@@ -22,6 +22,7 @@ For code details, refer to:
     - Queries new records from the specified source table (defaults to `employees`, `id > lastCursor`).
 4.  **Ingestion**:
     - Encrypts each employee record as a JSON fragment via AES-GCM using the DEK and a fresh random nonce.
+    - Generates a deterministic `correlation_id` (UUIDv5) based on the specified `business_key_column`.
     - Inserts the encrypted records into `raw_ingestion` with `pending` status.
     - Updates the cursor offset to the highest processed ID.
 5.  **IPC Event Reporting**: Sends startup status, audit events (e.g. key decryption confirmations), processing progress, and final run statistics back to the scheduler over a Unix Domain Socket.
@@ -52,9 +53,12 @@ Example:
   "source_name": "mirror-dev_employee",
   "table": "employee",
   "cursor_column": "id",
-  "topic": "Employee"
+  "topic": "Employee",
+  "business_key_column": "employee_id"
 }
 ```
+
+* `business_key_column`: (Optional) Specifies the column to be used for generating the deterministic `correlation_id`. Critical for joining distributed data in the Transformation Layer. Defaults to the `cursor_column` if omitted.
 
 ---
 

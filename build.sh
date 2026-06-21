@@ -2,6 +2,6 @@
 
 MITM_VERSION=$(git describe --tags)
 
-go build -ldflags "-X main.version=${MITM_VERSION}" -o ./bin/mitm-collector-pg main.go
+CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${MITM_VERSION}" -o ./bin/mitm-collector-pg main.go
 
 cp bin/mitm-collector-pg ../../scheduler/mitm_scheduler/bin/.
