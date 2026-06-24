@@ -499,6 +499,7 @@ func main() {
 	}
 
 	// 16. Finish execution
+	ipc.SendAudit(fmt.Sprintf("%s (%s) finished", appName, version))
 	ipc.SendEvent("finished", fmt.Sprintf("Successfully processed and ingested %d PostgreSQL records into RAW table", recordsIngested), 100)
 	log.Printf("Collector finished. Ingested %d records.", recordsIngested)
 }
