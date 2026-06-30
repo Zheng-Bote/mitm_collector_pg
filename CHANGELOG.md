@@ -5,6 +5,13 @@ All notable changes to the PostgreSQL Collector will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.9.0] - 2026-06-30
+
+### Changed
+- **Config Restructuring**: Updated the MitM database connection logic to correctly parse the JSON configuration (`MITM_DB_CONFIG_JSON`) provided by the scheduler, successfully unpacking the nested `"db"` object format.
+- **Database Connection**: The collector now strictly prioritizes the JSON configuration (`MITM_DB_CONFIG_JSON`) over direct environment variables. Direct environment variables (`MITM_DB_HOST`, etc.) now serve only as a fallback.
+- **Audit Logging**: Added IPC audit logging (`ipc.SendAudit`) during initialization to accurately log the source of the database configuration (`JSON Config (MITM_DB_CONFIG_JSON)` vs `Environment Variables`).
+
 ## [v0.8.0] - 2026-06-24
 
 ### Added

@@ -153,28 +153,52 @@ func main() {
 	ipc.SendEvent("started", fmt.Sprintf("%s (%s) started", appName, version), 0)
 	ipc.SendAudit(fmt.Sprintf("%s (%s) started", appName, version))
 
-	// 3. Parse Target DB configuration from ENV
+	// 3. Parse Target DB configuration
 	var targetCfg TargetDBConfig
-	targetCfg.Host = os.Getenv("MITM_DB_HOST")
-	if portStr := os.Getenv("MITM_DB_PORT"); portStr != "" {
-		targetCfg.Port, _ = strconv.Atoi(portStr)
+	configSource := "Environment Variables"
+	jsonConfig := os.Getenv("MITM_DB_CONFIG_JSON")
+	
+	if jsonConfig != "" {
+		var fullCfg struct {
+			DB struct {
+				Host     string `json:"host"`
+				Port     int    `json:"port"`
+				User     string `json:"user"`
+				Password string `json:"password"`
+				Database string `json:"database"`
+			} `json:"db"`
+		}
+		if err := json.Unmarshal([]byte(jsonConfig), &fullCfg); err != nil {
+			if ipc != nil {
+				ipc.SendEvent("failed", fmt.Sprintf("Failed to parse MitM database JSON config: %v", err), 0)
+			}
+			log.Fatalf("Failed to parse MitM JSON configuration: %v", err)
+		}
+		targetCfg.Host = fullCfg.DB.Host
+		targetCfg.Port = fullCfg.DB.Port
+		targetCfg.User = fullCfg.DB.User
+		targetCfg.Password = fullCfg.DB.Password
+		targetCfg.Database = fullCfg.DB.Database
+		configSource = "JSON Config (MITM_DB_CONFIG_JSON)"
+	} else {
+		targetCfg.Host = os.Getenv("MITM_DB_HOST")
+		if portStr := os.Getenv("MITM_DB_PORT"); portStr != "" {
+			targetCfg.Port, _ = strconv.Atoi(portStr)
+		}
+		targetCfg.User = os.Getenv("MITM_DB_USER")
+		targetCfg.Password = os.Getenv("MITM_DB_PASSWORD")
+		targetCfg.Database = os.Getenv("MITM_DB_NAME")
 	}
-	targetCfg.User = os.Getenv("MITM_DB_USER")
-	targetCfg.Password = os.Getenv("MITM_DB_PASSWORD")
-	targetCfg.Database = os.Getenv("MITM_DB_NAME")
 
 	if targetCfg.Host == "" {
-		// Fallback to JSON from ENV
-		jsonConfig := os.Getenv("MITM_DB_CONFIG_JSON")
-		if jsonConfig != "" {
-			if err := json.Unmarshal([]byte(jsonConfig), &targetCfg); err != nil {
-				ipc.SendEvent("failed", fmt.Sprintf("Failed to parse MitM database JSON config: %v", err), 0)
-				log.Fatalf("Failed to parse MitM JSON configuration: %v", err)
-			}
-		} else {
+		if ipc != nil {
 			ipc.SendEvent("failed", "MitM database configuration missing in ENV", 0)
-			log.Fatal("MitM database credentials not found in environment (MITM_DB_HOST or MITM_DB_CONFIG_JSON)")
 		}
+		log.Fatal("MitM database credentials not found in environment (MITM_DB_HOST or MITM_DB_CONFIG_JSON)")
+	}
+
+	if ipc != nil {
+		ipc.SendAudit(fmt.Sprintf("Loaded database configuration from %s", configSource))
 	}
 
 	// 3b. Parse optional collector arguments from scheduler (now in os.Args[1])

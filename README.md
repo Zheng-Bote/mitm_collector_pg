@@ -34,7 +34,8 @@ For code details, refer to:
 ### Environment Variables
 
 - `MASTER_KEY` (Required): The base64-encoded 32-byte Master Key (KEK) used to unwrap DEKs.
-- `MITM_DB_HOST`, `MITM_DB_PORT`, `MITM_DB_USER`, `MITM_DB_PASSWORD`, `MITM_DB_NAME` (Required): The connection parameters for the central target MitM database. Alternatively, the JSON equivalent can be passed via `MITM_DB_CONFIG_JSON`.
+- `MITM_DB_CONFIG_JSON` (**Preferred**): JSON-encoded credentials containing a nested `"db"` object for the MitM PostgreSQL database.
+- `MITM_DB_HOST`, `MITM_DB_PORT`, `MITM_DB_USER`, `MITM_DB_PASSWORD`, `MITM_DB_NAME` (**Fallback**): The connection parameters for the central target MitM database.
 - `RUN_ID` (Optional): Run ID injected by the scheduler to identify this execution instance.
 - `SCHEDULER_SOCKET_PATH` (Optional): Path to the Unix socket for IPC event logging.
 
@@ -90,6 +91,9 @@ To test the binary manually from the command line:
 export MASTER_KEY="Y29uZmlkZW50aWFsX21hc3Rlcl9rZXlfMzJfYnl0ZXM="
 
 # 2. Run the collector binary, passing the MitM connection details and optional overrides
+export MITM_DB_CONFIG_JSON='{"db":{"host":"127.0.0.1","port":5432,"user":"postgres","password":"...","database":"mitm"}}'
+
+# Or via Direct Environment Variables (Fallback)
 export MITM_DB_HOST="127.0.0.1"
 export MITM_DB_PORT="5432"
 export MITM_DB_USER="postgres"
