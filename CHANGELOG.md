@@ -5,6 +5,11 @@ All notable changes to the PostgreSQL Collector will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.10.0] - 2026-07-07
+
+### Added
+- **SSL Support**: Added support for the `MITM_DB_SSLMODE` environment variable. The collector now respects this setting and applies it to the MitM PostgreSQL connection string.
+
 ## [v0.9.0] - 2026-06-30
 
 ### Changed

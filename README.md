@@ -36,6 +36,7 @@ For code details, refer to:
 - `MASTER_KEY` (Required): The base64-encoded 32-byte Master Key (KEK) used to unwrap DEKs.
 - `MITM_DB_CONFIG_JSON` (**Preferred**): JSON-encoded credentials containing a nested `"db"` object for the MitM PostgreSQL database.
 - `MITM_DB_HOST`, `MITM_DB_PORT`, `MITM_DB_USER`, `MITM_DB_PASSWORD`, `MITM_DB_NAME` (**Fallback**): The connection parameters for the central target MitM database.
+- `MITM_DB_SSLMODE` (Optional): If set to `"true"`, enforces SSL connections (`sslmode=require`) to the target MitM database.
 - `RUN_ID` (Optional): Run ID injected by the scheduler to identify this execution instance.
 - `SCHEDULER_SOCKET_PATH` (Optional): Path to the Unix socket for IPC event logging.
 
@@ -99,6 +100,7 @@ export MITM_DB_PORT="5432"
 export MITM_DB_USER="postgres"
 export MITM_DB_PASSWORD="yourpassword"
 export MITM_DB_NAME="mitm"
+export MITM_DB_SSLMODE="true"
 
 ./bin/mitm-collector-pg-employee '{"source_name": "PG_EMPLOYEE", "table": "employees"}'
 ```

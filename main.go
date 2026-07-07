@@ -247,8 +247,12 @@ func main() {
 	if targetCfg.DSN != "" {
 		mitmDSN = targetCfg.DSN
 	} else {
-		mitmDSN = fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=disable",
-			targetCfg.User, targetCfg.Password, targetCfg.Host, targetCfg.Port, targetCfg.Database)
+		sslMode := "disable"
+		if os.Getenv("MITM_DB_SSLMODE") == "true" {
+			sslMode = "require"
+		}
+		mitmDSN = fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=%s",
+			targetCfg.User, targetCfg.Password, targetCfg.Host, targetCfg.Port, targetCfg.Database, sslMode)
 	}
 
 	ctx := context.Background()
