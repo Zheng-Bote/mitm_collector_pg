@@ -40,8 +40,8 @@ import (
 
 var (
 	appName        = "PostgreSQL Collector"
-	appDescription = "Retrieves employee data from a PostgreSQL source"
-	version        = "1.0.0"
+	appDescription = "Extracts data from PostgreSQL databases"
+	version        = "0.11.0"
 )
 
 // TargetDBConfig defines parameters for the MitM target database passed via JSON CLI argument
@@ -89,6 +89,8 @@ type IPCClient struct {
 	SocketPath string
 	RunID      int
 	Component  string
+	Topic      string
+	SourceName string
 }
 
 func (c *IPCClient) SendEvent(status, message string, progress int) {
@@ -101,6 +103,10 @@ func (c *IPCClient) SendEvent(status, message string, progress int) {
 		return
 	}
 	defer conn.Close()
+
+	if c.Topic != "" && c.SourceName != "" {
+		message = fmt.Sprintf("%s: %s: %s", c.Topic, c.SourceName, message)
+	}
 
 	event := StatusEvent{
 		RunID:    c.RunID,
@@ -123,6 +129,10 @@ func (c *IPCClient) SendAudit(message string) {
 		return
 	}
 	defer conn.Close()
+
+	if c.Topic != "" && c.SourceName != "" {
+		message = fmt.Sprintf("%s: %s: %s", c.Topic, c.SourceName, message)
+	}
 
 	event := StatusEvent{
 		RunID:     c.RunID,
@@ -241,6 +251,11 @@ func main() {
 
 	if targetCfg.SourceName == "" {
 		targetCfg.SourceName = "PG_EMPLOYEE"
+	}
+
+	if ipc != nil {
+		ipc.Topic = topicName
+		ipc.SourceName = targetCfg.SourceName
 	}
 
 	var mitmDSN string
