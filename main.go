@@ -41,7 +41,7 @@ import (
 var (
 	appName        = "PostgreSQL Collector"
 	appDescription = "Extracts data from PostgreSQL databases"
-	version        = "0.11.0"
+	version        = "0.12.0"
 )
 
 // TargetDBConfig defines parameters for the MitM target database passed via JSON CLI argument
@@ -167,7 +167,7 @@ func main() {
 	var targetCfg TargetDBConfig
 	configSource := "Environment Variables"
 	jsonConfig := os.Getenv("MITM_DB_CONFIG_JSON")
-	
+
 	if jsonConfig != "" {
 		var fullCfg struct {
 			DB struct {
@@ -241,10 +241,17 @@ func main() {
 		}
 	}
 
+	if strings.ToLower(cursorColumn) == "none" {
+		cursorColumn = ""
+	}
+
 	// Sanitize tableName (prevent SQL injection)
 	sanitizedTable := tableName
 	for _, char := range sanitizedTable {
 		if !((char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') || char == '_' || char == '.') {
+			if ipc != nil {
+				ipc.SendEvent("failed", fmt.Sprintf("Invalid table name: %s", tableName), 0)
+			}
 			log.Fatalf("Invalid table name: %s", tableName)
 		}
 	}
@@ -275,8 +282,10 @@ func main() {
 	// 4. Connect to MitM target database
 	mitmPool, err := pgxpool.New(ctx, mitmDSN)
 	if err != nil {
-		ipc.SendEvent("failed", fmt.Sprintf("Failed to connect to MitM database: %v", err), 0)
-		log.Fatalf("Failed to connect to MitM database: %v", err)
+		msg := fmt.Sprintf("Failed to connect to MitM database: %v", err)
+		ipc.SendEvent("failed", msg, 0)
+		ipc.SendAudit("ERROR: " + msg)
+		log.Fatalf(msg)
 	}
 	defer mitmPool.Close()
 
@@ -380,8 +389,10 @@ func main() {
 	// 10. Parse source database configuration
 	var sourceCfg SourceDBConfig
 	if err := json.Unmarshal(decryptedConfigBytes, &sourceCfg); err != nil {
-		ipc.SendEvent("failed", fmt.Sprintf("Failed to parse decrypted source database configuration: %v", err), 0)
-		log.Fatalf("Failed to parse decrypted source config: %v", err)
+		msg := fmt.Sprintf("Failed to parse decrypted source database configuration: %v", err)
+		ipc.SendEvent("failed", msg, 0)
+		ipc.SendAudit("ERROR: " + msg)
+		log.Fatalf(msg)
 	}
 
 	var sourceDSN string
@@ -392,11 +403,15 @@ func main() {
 			sourceCfg.User, sourceCfg.Password, sourceCfg.Host, sourceCfg.Port, sourceCfg.Database)
 	}
 
+	ipc.SendAudit(fmt.Sprintf("DEBUG: Trying to connect to PostgreSQL at %s:%d with Database '%s' (User: %s)", sourceCfg.Host, sourceCfg.Port, sourceCfg.Database, sourceCfg.User))
+
 	// 11. Connect to source database
 	sourcePool, err := pgxpool.New(ctx, sourceDSN)
 	if err != nil {
-		ipc.SendEvent("failed", fmt.Sprintf("Failed to connect to source database: %v", err), 0)
-		log.Fatalf("Failed to connect to source database: %v", err)
+		msg := fmt.Sprintf("Failed to connect to PostgreSQL source database: %v", err)
+		ipc.SendEvent("failed", msg, 0)
+		ipc.SendAudit("ERROR: " + msg)
+		log.Fatalf(msg)
 	}
 	defer sourcePool.Close()
 
@@ -504,7 +519,7 @@ func main() {
 		} else if currentCursorVal != "" {
 			businessKey = currentCursorVal
 		} else {
-			businessKey = "UNKNOWN"
+			businessKey = uuid.New().String()
 		}
 
 		// Generate deterministic Correlation ID
@@ -542,8 +557,8 @@ func main() {
 	}
 
 	// 16. Finish execution
+	ipc.SendAudit(fmt.Sprintf("Successfully processed and ingested %d PostgreSQL records into RAW table", recordsIngested))
 	ipc.SendAudit(fmt.Sprintf("%s (%s) finished", appName, version))
-	ipc.SendEvent("finished", fmt.Sprintf("Successfully processed and ingested %d PostgreSQL records into RAW table", recordsIngested), 100)
 	log.Printf("Collector finished. Ingested %d records.", recordsIngested)
 }
 
