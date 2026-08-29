@@ -29,8 +29,10 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -279,15 +281,25 @@ func main() {
 			targetCfg.User, targetCfg.Password, targetCfg.Host, targetCfg.Port, targetCfg.Database, sslMode)
 	}
 
-	ctx := context.Background()
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
 
 	// 4. Connect to MitM target database
-	mitmPool, err := pgxpool.New(ctx, mitmDSN)
+	config_mitmPool, err := pgxpool.ParseConfig(mitmDSN)
+	if err == nil {
+		config_mitmPool.MaxConns = 20
+		config_mitmPool.MaxConnIdleTime = 5 * time.Minute
+		config_mitmPool.MaxConnLifetime = 1 * time.Hour
+	}
+	var mitmPool *pgxpool.Pool
+	if err == nil {
+		mitmPool, err = pgxpool.NewWithConfig(ctx, config_mitmPool)
+	}
 	if err != nil {
 		msg := fmt.Sprintf("Failed to connect to MitM database: %v", err)
 		ipc.SendEvent("failed", msg, 0)
 		ipc.SendAudit("ERROR: " + msg)
-		log.Fatalf(msg)
+		log.Fatalf("%s", msg)
 	}
 	defer mitmPool.Close()
 
@@ -300,18 +312,12 @@ func main() {
 		log.Fatal("Missing MASTER_KEY environment variable")
 	}
 
-	var kek []byte
-	if decoded, err := base64.StdEncoding.DecodeString(masterKey); err == nil {
-		kek = decoded
-	} else {
-		kek = []byte(masterKey)
-	}
-
-	// Adjust KEK to 32 bytes if necessary
-	if len(kek) != 32 {
-		adjusted := make([]byte, 32)
-		copy(adjusted, kek)
-		kek = adjusted
+	kek, err := validateKEK(masterKey)
+	if err != nil {
+		if ipc != nil {
+			ipc.SendEvent("failed", err.Error(), 0)
+		}
+		log.Fatalf("%v", err)
 	}
 
 	// 6. Query encrypted source credentials
@@ -394,7 +400,7 @@ func main() {
 		msg := fmt.Sprintf("Failed to parse decrypted source database configuration: %v", err)
 		ipc.SendEvent("failed", msg, 0)
 		ipc.SendAudit("ERROR: " + msg)
-		log.Fatalf(msg)
+		log.Fatalf("%s", msg)
 	}
 
 	var sourceDSN string
@@ -408,12 +414,21 @@ func main() {
 	ipc.SendAudit(fmt.Sprintf("DEBUG: Trying to connect to PostgreSQL at %s:%d with Database '%s' (User: %s)", sourceCfg.Host, sourceCfg.Port, sourceCfg.Database, sourceCfg.User))
 
 	// 11. Connect to source database
-	sourcePool, err := pgxpool.New(ctx, sourceDSN)
+	config_sourcePool, err := pgxpool.ParseConfig(sourceDSN)
+	if err == nil {
+		config_sourcePool.MaxConns = 20
+		config_sourcePool.MaxConnIdleTime = 5 * time.Minute
+		config_sourcePool.MaxConnLifetime = 1 * time.Hour
+	}
+	var sourcePool *pgxpool.Pool
+	if err == nil {
+		sourcePool, err = pgxpool.NewWithConfig(ctx, config_sourcePool)
+	}
 	if err != nil {
 		msg := fmt.Sprintf("Failed to connect to PostgreSQL source database: %v", err)
 		ipc.SendEvent("failed", msg, 0)
 		ipc.SendAudit("ERROR: " + msg)
-		log.Fatalf(msg)
+		log.Fatalf("%s", msg)
 	}
 	defer sourcePool.Close()
 
@@ -471,10 +486,77 @@ func main() {
 		}
 	}
 
+	
 	recordsIngested := 0
+	recordsFailed := 0
 	maxCursorValue := ""
 
 	ipc.SendEvent("processing", "Preparing dynamic record ingestion", 70)
+
+	batch := &pgx.Batch{}
+	batchSize := 0
+	const maxBatchSize = 1000
+
+	executeBatch := func(cursorToSave string) {
+		if batchSize == 0 {
+			return
+		}
+		
+		if cursorToSave != "" {
+			batch.Queue(`
+				INSERT INTO ingestion_cursors (source_name, last_cursor, updated_at)
+				VALUES ($1, $2, NOW())
+				ON CONFLICT (source_name) 
+				DO UPDATE SET last_cursor = EXCLUDED.last_cursor, updated_at = NOW()
+			`, targetCfg.SourceName, cursorToSave)
+		}
+		
+		tx, err := mitmPool.Begin(ctx)
+		if err != nil {
+			log.Printf("Failed to begin transaction for batch: %v", err)
+			recordsFailed += batchSize
+			batch = &pgx.Batch{}
+			batchSize = 0
+			return
+		}
+		
+		br := tx.SendBatch(ctx, batch)
+		
+		var batchError error
+		for i := 0; i < batchSize; i++ {
+			_, err := br.Exec()
+			if err != nil {
+				batchError = err
+				break
+			}
+		}
+		
+		if cursorToSave != "" && batchError == nil {
+			_, err := br.Exec()
+			if err != nil {
+				batchError = err
+			}
+		}
+		
+		br.Close()
+		
+		if batchError != nil {
+			tx.Rollback(ctx)
+			log.Printf("Batch exec error: %v", batchError)
+			recordsFailed += batchSize
+		} else {
+			if err := tx.Commit(ctx); err != nil {
+				log.Printf("Failed to commit batch tx: %v", err)
+				recordsFailed += batchSize
+			} else {
+				recordsIngested += batchSize
+			}
+		}
+		
+		batch = &pgx.Batch{}
+		batchSize = 0
+	}
+
 
 	for rows.Next() {
 		values, err := rows.Values()
@@ -521,47 +603,49 @@ func main() {
 		} else if currentCursorVal != "" {
 			businessKey = currentCursorVal
 		} else {
-			businessKey = uuid.New().String()
+			log.Printf("Missing business key for row, skipping")
+			continue
 		}
 
 		// Generate deterministic Correlation ID
 		namespaceMitM := uuid.MustParse("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 		correlationID := uuid.NewSHA1(namespaceMitM, []byte(businessKey))
 
-		// Insert into raw_ingestion in target database
-		_, err = mitmPool.Exec(ctx, `
+		// Queue in batch
+		batch.Queue(`
 			INSERT INTO raw_ingestion (topic, source_system, correlation_id, payload, nonce, dek_id, status)
 			VALUES ($1, $2, $3, $4, $5, $6, 'pending')
 		`, topicName, targetCfg.SourceName, correlationID, encryptedPayload, nonce, dekID)
-		if err != nil {
-			log.Printf("Failed to insert raw fragment: %v", err)
-			continue
-		}
-
-		recordsIngested++
+		batchSize++
+		
 		if currentCursorVal != "" {
 			maxCursorValue = currentCursorVal
 		}
+
+		if batchSize >= maxBatchSize {
+			executeBatch(maxCursorValue)
+		}
 	}
 
-	// 15. Update cursor if records were ingested
-	if recordsIngested > 0 && maxCursorValue != "" {
-		_, err = mitmPool.Exec(ctx, `
-			INSERT INTO ingestion_cursors (source_name, last_cursor, updated_at)
-			VALUES ($1, $2, NOW())
-			ON CONFLICT (source_name) 
-			DO UPDATE SET last_cursor = EXCLUDED.last_cursor, updated_at = NOW()
-		`, targetCfg.SourceName, maxCursorValue)
-		if err != nil {
-			log.Printf("Failed to save current cursor state: %v", err)
+	executeBatch(maxCursorValue)
+
+	if err := rows.Err(); err != nil {
+		msg := fmt.Sprintf("Error reading rows: %v", err)
+		if ipc != nil {
+			ipc.SendEvent("failed", msg, 0)
 		}
+		log.Fatalf("%s", msg)
+	}
+
+	// 15. Cursor is updated atomically with batches
+	if recordsIngested > 0 && maxCursorValue != "" {
 		ipc.SendAudit(fmt.Sprintf("Ingested %d PostgreSQL records. Cursor updated to %s.", recordsIngested, maxCursorValue))
 	}
 
 	// 16. Finish execution
-	ipc.SendAudit(fmt.Sprintf("Successfully processed and ingested %d PostgreSQL records into RAW table", recordsIngested))
+	ipc.SendAudit(fmt.Sprintf("Successfully processed and ingested %d PostgreSQL records into RAW table. Failed: %d", recordsIngested, recordsFailed))
 	ipc.SendAudit(fmt.Sprintf("%s (%s) finished", appName, version))
-	log.Printf("Collector finished. Ingested %d records.", recordsIngested)
+	log.Printf("Collector finished. Ingested %d records. Failed %d.", recordsIngested, recordsFailed)
 }
 
 func cleanValue(val interface{}) interface{} {
@@ -576,4 +660,18 @@ func cleanValue(val interface{}) interface{} {
 	default:
 		return v
 	}
+}
+
+func validateKEK(masterKey string) ([]byte, error) {
+	var kek []byte
+	if decoded, err := base64.StdEncoding.DecodeString(masterKey); err == nil {
+		kek = decoded
+	} else {
+		kek = []byte(masterKey)
+	}
+
+	if len(kek) != 32 {
+		return nil, fmt.Errorf("Invalid MASTER_KEY length: expected 32 bytes, got %d", len(kek))
+	}
+	return kek, nil
 }
