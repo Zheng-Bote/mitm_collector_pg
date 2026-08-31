@@ -262,16 +262,16 @@ func main() {
 		cursorColumn = ""
 	}
 
-	// Sanitize tableName (prevent SQL injection)
-	sanitizedTable := tableName
-	for _, char := range sanitizedTable {
-		if !((char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') || char == '_' || char == '.') {
-			if ipc != nil {
-				ipc.SendEvent("failed", fmt.Sprintf("Invalid table name: %s", tableName), 0)
-			}
-			log.Fatalf("Invalid table name: %s", tableName)
-		}
+	// Sanitize identifiers (prevent SQL injection)
+	if err := validateIdentifier(tableName); err != nil {
+		if ipc != nil { ipc.SendEvent("failed", fmt.Sprintf("Invalid table name '%s': %v", tableName, err), 0) }
+		log.Fatalf("Invalid table name '%s': %v", tableName, err)
 	}
+	if err := validateIdentifier(cursorColumn); err != nil {
+		if ipc != nil { ipc.SendEvent("failed", fmt.Sprintf("Invalid cursor column '%s': %v", cursorColumn, err), 0) }
+		log.Fatalf("Invalid cursor column '%s': %v", cursorColumn, err)
+	}
+	sanitizedTable := tableName
 
 	if targetCfg.SourceName == "" {
 		targetCfg.SourceName = "PG_EMPLOYEE"
@@ -728,4 +728,17 @@ func fetchCredentialsFromScheduler() (string, string, error) {
 		}
 	}
 	return "", "", fmt.Errorf("no response or invalid JSON from scheduler")
+}
+
+// validateIdentifier ensures the string only contains safe characters for SQL identifiers
+func validateIdentifier(id string) error {
+	if id == "" {
+		return nil
+	}
+	for _, char := range id {
+		if !((char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') || char == '_' || char == '.') {
+			return fmt.Errorf("invalid character in identifier: %c", char)
+		}
+	}
+	return nil
 }
