@@ -44,7 +44,7 @@ import (
 var (
 	appName        = "PostgreSQL Collector"
 	appDescription = "Extracts data from PostgreSQL databases"
-	version        = "0.15.0"
+	version        = "0.15.1"
 )
 
 // TargetDBConfig defines parameters for the MitM target database passed via JSON CLI argument
