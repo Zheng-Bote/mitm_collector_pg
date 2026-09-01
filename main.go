@@ -193,6 +193,7 @@ func main() {
 				User     string `json:"user"`
 				Password string `json:"password"`
 				Database string `json:"database"`
+				SSLMode  string `json:"sslmode"`
 			} `json:"db"`
 		}
 		if err := json.Unmarshal([]byte(jsonConfig), &fullCfg); err != nil {
@@ -206,6 +207,9 @@ func main() {
 		targetCfg.User = fullCfg.DB.User
 		targetCfg.Password = fullCfg.DB.Password
 		targetCfg.Database = fullCfg.DB.Database
+		if fullCfg.DB.SSLMode != "" {
+			os.Setenv("MITM_DB_SSLMODE", fullCfg.DB.SSLMode)
+		}
 		configSource = "JSON Config (MITM_DB_CONFIG_JSON)"
 	} else {
 		targetCfg.Host = os.Getenv("MITM_DB_HOST")
