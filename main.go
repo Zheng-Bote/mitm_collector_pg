@@ -70,11 +70,12 @@ type SourceDBConfig struct {
 
 // CollectorArgs defines optional runtime arguments passed by the scheduler as JSON
 type CollectorArgs struct {
-	SourceName        string `json:"source_name"`
-	Table             string `json:"table"`
-	CursorColumn      string `json:"cursor_column"`
-	Topic             string `json:"topic"`
-	BusinessKeyColumn string `json:"business_key_column"`
+	SourceName        string              `json:"source_name"`
+	Table             string              `json:"table"`
+	CursorColumn      string              `json:"cursor_column"`
+	Topic             string              `json:"topic"`
+	BusinessKeyColumn string              `json:"business_key_column"`
+	DBWhereIn         map[string][]string `json:"db_where_in,omitempty"`
 }
 
 // StatusEvent is sent to the scheduler Unix socket
@@ -239,10 +240,14 @@ func main() {
 	cursorColumn := "" // No default, to allow tables without 'id'
 	topicName := "employee.data"
 	businessKeyCol := "id" // Default fallback
+	var dbWhereIn map[string][]string
 
 	if len(os.Args) >= 2 {
 		var colArgs CollectorArgs
 		if err := json.Unmarshal([]byte(os.Args[1]), &colArgs); err == nil {
+			if len(colArgs.DBWhereIn) > 0 {
+				dbWhereIn = colArgs.DBWhereIn
+			}
 			if colArgs.SourceName != "" {
 				targetCfg.SourceName = colArgs.SourceName
 			}
@@ -473,6 +478,29 @@ func main() {
 	var queryArgs []interface{}
 	var query string
 
+	baseSQL := fmt.Sprintf("SELECT * FROM %s", sanitizedTable)
+	var conditions []string
+
+	if len(dbWhereIn) > 0 {
+		for col, vals := range dbWhereIn {
+			if err := validateIdentifier(col); err != nil {
+				if ipc != nil {
+					ipc.SendEvent("failed", fmt.Sprintf("Invalid column name in db_where_in: %s", col), 0)
+				}
+				log.Fatalf("Invalid column name in db_where_in: %s", col)
+			}
+			if len(vals) == 0 {
+				continue
+			}
+			var placeholders []string
+			for _, val := range vals {
+				queryArgs = append(queryArgs, val)
+				placeholders = append(placeholders, fmt.Sprintf("$%d", len(queryArgs)))
+			}
+			conditions = append(conditions, fmt.Sprintf("%s IN (%s)", col, strings.Join(placeholders, ", ")))
+		}
+	}
+
 	if lastCursor != "" && cursorColumn != "" {
 		var cursorVal interface{} = lastCursor
 		if val, err := strconv.Atoi(lastCursor); err == nil {
@@ -480,15 +508,19 @@ func main() {
 		} else if val, err := strconv.ParseFloat(lastCursor, 64); err == nil {
 			cursorVal = val
 		}
-		query = fmt.Sprintf("SELECT * FROM %s WHERE %s > $1 ORDER BY %s ASC",
-			sanitizedTable, cursorColumn, cursorColumn)
 		queryArgs = append(queryArgs, cursorVal)
-	} else if cursorColumn != "" {
-		query = fmt.Sprintf("SELECT * FROM %s ORDER BY %s ASC",
-			sanitizedTable, cursorColumn)
-	} else {
-		query = fmt.Sprintf("SELECT * FROM %s", sanitizedTable)
+		conditions = append(conditions, fmt.Sprintf("%s > $%d", cursorColumn, len(queryArgs)))
 	}
+
+	if len(conditions) > 0 {
+		baseSQL += " WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	if cursorColumn != "" {
+		baseSQL += fmt.Sprintf(" ORDER BY %s ASC", cursorColumn)
+	}
+
+	query = baseSQL
 
 	rows, err = sourcePool.Query(ctx, query, queryArgs...)
 	if err != nil {

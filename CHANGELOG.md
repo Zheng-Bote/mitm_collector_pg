@@ -5,11 +5,23 @@ All notable changes to the PostgreSQL Collector will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.16.0] - 2026-09-20
+
+### Added
+- Added support for flexible JSON argument `db_where_in` to allow dynamic `WHERE IN` SQL filtering, replacing statically hardcoded filters.
+
+
 ## [v0.15.3] - 2026-09-01
 
 ### Fixed
 
 - **IPC SSLMode DSN Fix**: Fixed an issue where the constructed database connection string (DSN) would incorrectly overwrite `MITM_DB_SSLMODE=require` with `disable`, which caused `FATAL: no encryption` errors in AWS RDS.
+
+## [Unreleased]
+
+### Added
+- Added support for flexible JSON argument `db_where_in` to allow dynamic `WHERE IN` SQL filtering, replacing statically hardcoded filters.
+
 
 ## [v0.15.2] - 2026-09-01
 
@@ -17,11 +29,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **IPC SSLMode Type Fix**: Changed `SSLMode` field in JSON parsing struct from `string` to `bool` to correctly unmarshal boolean values (`true`/`false`) sent by the scheduler.
 
+## [Unreleased]
+
+### Added
+- Added support for flexible JSON argument `db_where_in` to allow dynamic `WHERE IN` SQL filtering, replacing statically hardcoded filters.
+
+
 ## [v0.15.1] - 2026-09-01
 
 ### Fixed
 
 - **IPC SSLMode Fix**: Fixed an issue where `SSLMode` was not correctly parsed from the scheduler's JSON configuration and improved the `MITM_DB_SSLMODE` fallback logic to support proper PostgreSQL sslmode strings (e.g., `require`, `verify-full`).
+
+## [Unreleased]
+
+### Added
+- Added support for flexible JSON argument `db_where_in` to allow dynamic `WHERE IN` SQL filtering, replacing statically hardcoded filters.
+
 
 ## [v0.15.0] - 2026-08-31
 
@@ -33,11 +57,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **SQL Injection Prevention**: Replaced the naive inline table name sanitization with a strict `validateIdentifier` allowlist applied to both the table name and the cursor column.
 
+## [Unreleased]
+
+### Added
+- Added support for flexible JSON argument `db_where_in` to allow dynamic `WHERE IN` SQL filtering, replacing statically hardcoded filters.
+
+
 ## [v0.14.0] - 2026-08-29
 
 ### Changed
 
 - **Components Logging**: Refactored component version logging mechanism across all layers (Collectors, Transformation, Delivery, Scheduler) to consistently output a clean `Major.Minor.Patch` version format.
+
+## [Unreleased]
+
+### Added
+- Added support for flexible JSON argument `db_where_in` to allow dynamic `WHERE IN` SQL filtering, replacing statically hardcoded filters.
+
 
 ## [v0.13.0] - 2026-08-29
 
@@ -47,11 +83,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Implemented graceful shutdown with context cancellation on `SIGINT`/`SIGTERM`.
 - Optimized performance with batched operations.
 
+## [Unreleased]
+
+### Added
+- Added support for flexible JSON argument `db_where_in` to allow dynamic `WHERE IN` SQL filtering, replacing statically hardcoded filters.
+
+
 ## [v0.12.0] - 2026-07-29
 
 ### Changed
 
 - **Correlation ID Fallback**: Changed the fallback for `correlation_id` from a hardcoded `"UNKNOWN"` string to a dynamically generated UUID (`uuid.New().String()`). This critical fix prevents rows with missing or NULL business keys from being falsely aggregated into a single record by the Transformation Engine.
+
+## [Unreleased]
+
+### Added
+- Added support for flexible JSON argument `db_where_in` to allow dynamic `WHERE IN` SQL filtering, replacing statically hardcoded filters.
+
 
 ## [v0.11.0] - 2026-07-15
 
@@ -59,11 +107,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **IPC Logging Enhancements**: Added `Topic` and `SourceName` fields to `IPCClient` to consistently prefix all IPC messages with `<Topic>: <SourceName>: `. This ensures uniform logging in the Scheduler console.
 
+## [Unreleased]
+
+### Added
+- Added support for flexible JSON argument `db_where_in` to allow dynamic `WHERE IN` SQL filtering, replacing statically hardcoded filters.
+
+
 ## [v0.10.0] - 2026-07-07
 
 ### Added
 
 - **SSL Support**: Added support for the `MITM_DB_SSLMODE` environment variable. The collector now respects this setting and applies it to the MitM PostgreSQL connection string.
+
+## [Unreleased]
+
+### Added
+- Added support for flexible JSON argument `db_where_in` to allow dynamic `WHERE IN` SQL filtering, replacing statically hardcoded filters.
+
 
 ## [v0.9.0] - 2026-06-30
 
@@ -73,11 +133,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Database Connection**: The collector now strictly prioritizes the JSON configuration (`MITM_DB_CONFIG_JSON`) over direct environment variables. Direct environment variables (`MITM_DB_HOST`, etc.) now serve only as a fallback.
 - **Audit Logging**: Added IPC audit logging (`ipc.SendAudit`) during initialization to accurately log the source of the database configuration (`JSON Config (MITM_DB_CONFIG_JSON)` vs `Environment Variables`).
 
+## [Unreleased]
+
+### Added
+- Added support for flexible JSON argument `db_where_in` to allow dynamic `WHERE IN` SQL filtering, replacing statically hardcoded filters.
+
+
 ## [v0.8.0] - 2026-06-24
 
 ### Added
 
 - **extending logging**
+
+## [Unreleased]
+
+### Added
+- Added support for flexible JSON argument `db_where_in` to allow dynamic `WHERE IN` SQL filtering, replacing statically hardcoded filters.
+
 
 ## [v0.7.0] - 2026-06-21
 
@@ -86,11 +158,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Stateful Aggregation**: Replaced `raw_ingestion_id` with a deterministic `correlation_id` (UUIDv5).
 - **Business Keys**: Introduced a `business_key_column` configuration property. The collector dynamically hashes this column's value (or a fallback) to compute stable correlation IDs, allowing cross-system fragment joins in the Transformation Layer.
 
+## [Unreleased]
+
+### Added
+- Added support for flexible JSON argument `db_where_in` to allow dynamic `WHERE IN` SQL filtering, replacing statically hardcoded filters.
+
+
 ## [v0.6.0] - 2026-06-15
 
 ### Added
 
 - **Centralized App Info**: Added `appName` and `version` globally. The component now broadcasts its name and version via IPC when starting.
+
+## [Unreleased]
+
+### Added
+- Added support for flexible JSON argument `db_where_in` to allow dynamic `WHERE IN` SQL filtering, replacing statically hardcoded filters.
+
 
 ## [v0.5.0] - 2026-06-10
 
@@ -98,12 +182,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Component Identifier**: Upgraded `IPCClient` to include the `Component` identifier `"mitm_collector_pg"` in all audit and status events sent to the scheduler.
 
+## [Unreleased]
+
+### Added
+- Added support for flexible JSON argument `db_where_in` to allow dynamic `WHERE IN` SQL filtering, replacing statically hardcoded filters.
+
+
 ## [v0.3.0] - 2026-06-06
 
 ### Changed
 
 - Changed MitM database credentials initialization: Credentials are now read from `MITM_DB_*` environment variables instead of `os.Args[1]`.
 - Job argument configuration (`CollectorArgs`) is now read from `os.Args[1]` instead of `os.Args[2]`.
+
+## [Unreleased]
+
+### Added
+- Added support for flexible JSON argument `db_where_in` to allow dynamic `WHERE IN` SQL filtering, replacing statically hardcoded filters.
+
 
 ## [v0.2.0] - 2026-06-05
 
@@ -119,6 +215,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Replaced hardcoded `Employee` struct scan logic with generic map serialization.
 - Updated database insertion query to route records to dynamic topics (defaults to `pg.<table_name>.data`).
 - Updated cursor persistence to support generic string-based cursor values (`maxCursorValue`) instead of numeric IDs.
+
+## [Unreleased]
+
+### Added
+- Added support for flexible JSON argument `db_where_in` to allow dynamic `WHERE IN` SQL filtering, replacing statically hardcoded filters.
+
 
 ## [v0.1.0] - 2026-06-04
 
