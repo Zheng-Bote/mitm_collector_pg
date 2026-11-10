@@ -5,6 +5,12 @@ All notable changes to the PostgreSQL Collector will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.16.1] - 2026-11-10
+
+### Fixed
+- All fatal errors are now sent both as `failed` status event and as audit event (`ERROR: <message>`) to the scheduler, so they appear in `job_audit_logs`.
+- Unparsable collector arguments (JSON in `os.Args[1]`) now abort the run with an error instead of continuing with default values.
+
 ## [v0.16.0] - 2026-09-20
 
 ### Added
