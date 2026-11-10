@@ -44,7 +44,7 @@ import (
 var (
 	appName        = "PostgreSQL Collector"
 	appDescription = "Extracts data from PostgreSQL databases"
-	version        = "0.15.3"
+	version        = "0.16.1"
 )
 
 // TargetDBConfig defines parameters for the MitM target database passed via JSON CLI argument
@@ -148,6 +148,13 @@ func (c *IPCClient) SendAudit(message string) {
 	_, _ = conn.Write(append(data, '\n'))
 }
 
+// fatal reports a fatal error to the scheduler as status event and job audit entry, then exits with code 1
+func fatal(ipc *IPCClient, msg string) {
+	ipc.SendEvent("failed", msg, 0)
+	ipc.SendAudit("ERROR: " + msg)
+	log.Fatal(msg)
+}
+
 func main() {
 	// Fetch credentials via IPC if running under scheduler
 	if dbCfg, masterKey, err := fetchCredentialsFromScheduler(); err == nil {
@@ -198,10 +205,7 @@ func main() {
 			} `json:"db"`
 		}
 		if err := json.Unmarshal([]byte(jsonConfig), &fullCfg); err != nil {
-			if ipc != nil {
-				ipc.SendEvent("failed", fmt.Sprintf("Failed to parse MitM database JSON config: %v", err), 0)
-			}
-			log.Fatalf("Failed to parse MitM JSON configuration: %v", err)
+			fatal(ipc, fmt.Sprintf("Failed to parse MitM database JSON config: %v", err))
 		}
 		targetCfg.Host = fullCfg.DB.Host
 		targetCfg.Port = fullCfg.DB.Port
@@ -225,10 +229,7 @@ func main() {
 	}
 
 	if targetCfg.Host == "" {
-		if ipc != nil {
-			ipc.SendEvent("failed", "MitM database configuration missing in ENV", 0)
-		}
-		log.Fatal("MitM database credentials not found in environment (MITM_DB_HOST or MITM_DB_CONFIG_JSON)")
+		fatal(ipc, "MitM database configuration missing in ENV")
 	}
 
 	if ipc != nil {
@@ -265,7 +266,7 @@ func main() {
 				businessKeyCol = colArgs.BusinessKeyColumn
 			}
 		} else {
-			log.Printf("Warning: Failed to parse collector arguments from os.Args[1]: %v", err)
+			fatal(ipc, fmt.Sprintf("Failed to parse collector arguments: %v", err))
 		}
 	}
 
@@ -275,12 +276,10 @@ func main() {
 
 	// Sanitize identifiers (prevent SQL injection)
 	if err := validateIdentifier(tableName); err != nil {
-		if ipc != nil { ipc.SendEvent("failed", fmt.Sprintf("Invalid table name '%s': %v", tableName, err), 0) }
-		log.Fatalf("Invalid table name '%s': %v", tableName, err)
+		fatal(ipc, fmt.Sprintf("Invalid table name '%s': %v", tableName, err))
 	}
 	if err := validateIdentifier(cursorColumn); err != nil {
-		if ipc != nil { ipc.SendEvent("failed", fmt.Sprintf("Invalid cursor column '%s': %v", cursorColumn, err), 0) }
-		log.Fatalf("Invalid cursor column '%s': %v", cursorColumn, err)
+		fatal(ipc, fmt.Sprintf("Invalid cursor column '%s': %v", cursorColumn, err))
 	}
 	sanitizedTable := tableName
 
@@ -328,9 +327,7 @@ func main() {
 	}
 	if err != nil {
 		msg := fmt.Sprintf("Failed to connect to MitM database: %v", err)
-		ipc.SendEvent("failed", msg, 0)
-		ipc.SendAudit("ERROR: " + msg)
-		log.Fatalf("%s", msg)
+		fatal(ipc, msg)
 	}
 	defer mitmPool.Close()
 
@@ -339,16 +336,12 @@ func main() {
 	// 5. Load KEK from environment
 	masterKey := os.Getenv("MASTER_KEY")
 	if masterKey == "" {
-		ipc.SendEvent("failed", "Missing MASTER_KEY environment variable", 0)
-		log.Fatal("Missing MASTER_KEY environment variable")
+		fatal(ipc, "Missing MASTER_KEY environment variable")
 	}
 
 	kek, err := validateKEK(masterKey)
 	if err != nil {
-		if ipc != nil {
-			ipc.SendEvent("failed", err.Error(), 0)
-		}
-		log.Fatalf("%v", err)
+		fatal(ipc, err.Error())
 	}
 
 	// 6. Query encrypted source credentials
@@ -363,8 +356,7 @@ func main() {
 		LIMIT 1
 	`, targetCfg.SourceName).Scan(&configPayload, &credentialsNonce, &dekID)
 	if err != nil {
-		ipc.SendEvent("failed", fmt.Sprintf("Failed to load source credentials for '%s': %v", targetCfg.SourceName, err), 0)
-		log.Fatalf("Failed to load source credentials: %v", err)
+		fatal(ipc, fmt.Sprintf("Failed to load source credentials for '%s': %v", targetCfg.SourceName, err))
 	}
 
 	// 7. Query wrapped DEK
@@ -376,32 +368,27 @@ func main() {
 		LIMIT 1
 	`, dekID).Scan(&wrappedKey)
 	if err != nil {
-		ipc.SendEvent("failed", fmt.Sprintf("Failed to load wrapped DEK (ID: %s): %v", dekID, err), 0)
-		log.Fatalf("Failed to load wrapped DEK: %v", err)
+		fatal(ipc, fmt.Sprintf("Failed to load wrapped DEK (ID: %s): %v", dekID, err))
 	}
 
 	// 8. Decrypt wrapped DEK using KEK
 	if len(wrappedKey) < 12 {
-		ipc.SendEvent("failed", "Wrapped DEK is too short (must be at least 12 bytes nonce + cipher)", 0)
-		log.Fatal("Wrapped DEK in database is invalid")
+		fatal(ipc, "Wrapped DEK is too short (must be at least 12 bytes nonce + cipher)")
 	}
 	dekNonce := wrappedKey[:12]
 	wrappedCipher := wrappedKey[12:]
 
 	kekBlock, err := aes.NewCipher(kek)
 	if err != nil {
-		ipc.SendEvent("failed", fmt.Sprintf("Failed to initialize AES cipher with KEK: %v", err), 0)
-		log.Fatalf("Failed to initialize AES cipher: %v", err)
+		fatal(ipc, fmt.Sprintf("Failed to initialize AES cipher with KEK: %v", err))
 	}
 	kekGCM, err := cipher.NewGCM(kekBlock)
 	if err != nil {
-		ipc.SendEvent("failed", fmt.Sprintf("Failed to initialize GCM with KEK: %v", err), 0)
-		log.Fatalf("Failed to initialize GCM: %v", err)
+		fatal(ipc, fmt.Sprintf("Failed to initialize GCM with KEK: %v", err))
 	}
 	dek, err := kekGCM.Open(nil, dekNonce, wrappedCipher, nil)
 	if err != nil {
-		ipc.SendEvent("failed", "Failed to decrypt wrapped DEK (KEK mismatch or corrupted key data)", 0)
-		log.Fatalf("Failed to decrypt DEK: %v", err)
+		fatal(ipc, "Failed to decrypt wrapped DEK (KEK mismatch or corrupted key data)")
 	}
 
 	ipc.SendAudit("Decrypted storage DEK using KEK successfully")
@@ -409,18 +396,15 @@ func main() {
 	// 9. Decrypt source connection credentials payload using DEK
 	dekBlock, err := aes.NewCipher(dek)
 	if err != nil {
-		ipc.SendEvent("failed", fmt.Sprintf("Failed to initialize AES cipher with DEK: %v", err), 0)
-		log.Fatalf("Failed to initialize DEK AES cipher: %v", err)
+		fatal(ipc, fmt.Sprintf("Failed to initialize AES cipher with DEK: %v", err))
 	}
 	dekGCM, err := cipher.NewGCM(dekBlock)
 	if err != nil {
-		ipc.SendEvent("failed", fmt.Sprintf("Failed to initialize GCM with DEK: %v", err), 0)
-		log.Fatalf("Failed to initialize DEK GCM: %v", err)
+		fatal(ipc, fmt.Sprintf("Failed to initialize GCM with DEK: %v", err))
 	}
 	decryptedConfigBytes, err := dekGCM.Open(nil, credentialsNonce, configPayload, nil)
 	if err != nil {
-		ipc.SendEvent("failed", "Failed to decrypt source config payload using DEK", 0)
-		log.Fatalf("Failed to decrypt source config: %v", err)
+		fatal(ipc, "Failed to decrypt source config payload using DEK")
 	}
 
 	ipc.SendAudit("Decrypted source connection credentials payload successfully")
@@ -429,9 +413,7 @@ func main() {
 	var sourceCfg SourceDBConfig
 	if err := json.Unmarshal(decryptedConfigBytes, &sourceCfg); err != nil {
 		msg := fmt.Sprintf("Failed to parse decrypted source database configuration: %v", err)
-		ipc.SendEvent("failed", msg, 0)
-		ipc.SendAudit("ERROR: " + msg)
-		log.Fatalf("%s", msg)
+		fatal(ipc, msg)
 	}
 
 	var sourceDSN string
@@ -457,9 +439,7 @@ func main() {
 	}
 	if err != nil {
 		msg := fmt.Sprintf("Failed to connect to PostgreSQL source database: %v", err)
-		ipc.SendEvent("failed", msg, 0)
-		ipc.SendAudit("ERROR: " + msg)
-		log.Fatalf("%s", msg)
+		fatal(ipc, msg)
 	}
 	defer sourcePool.Close()
 
@@ -484,10 +464,7 @@ func main() {
 	if len(dbWhereIn) > 0 {
 		for col, vals := range dbWhereIn {
 			if err := validateIdentifier(col); err != nil {
-				if ipc != nil {
-					ipc.SendEvent("failed", fmt.Sprintf("Invalid column name in db_where_in: %s", col), 0)
-				}
-				log.Fatalf("Invalid column name in db_where_in: %s", col)
+				fatal(ipc, fmt.Sprintf("Invalid column name in db_where_in: %s", col))
 			}
 			if len(vals) == 0 {
 				continue
@@ -524,8 +501,7 @@ func main() {
 
 	rows, err = sourcePool.Query(ctx, query, queryArgs...)
 	if err != nil {
-		ipc.SendEvent("failed", fmt.Sprintf("Failed to query source database: %v", err), 0)
-		log.Fatalf("Failed to query source database: %v", err)
+		fatal(ipc, fmt.Sprintf("Failed to query source database: %v", err))
 	}
 	defer rows.Close()
 
@@ -689,10 +665,7 @@ func main() {
 
 	if err := rows.Err(); err != nil {
 		msg := fmt.Sprintf("Error reading rows: %v", err)
-		if ipc != nil {
-			ipc.SendEvent("failed", msg, 0)
-		}
-		log.Fatalf("%s", msg)
+		fatal(ipc, msg)
 	}
 
 	// 15. Cursor is updated atomically with batches
